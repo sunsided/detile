@@ -34,6 +34,7 @@ pub fn run(args: &UiArgs) -> anyhow::Result<()> {
         zoom: 4.0,
         tolerance: 8.0,
         cache: None,
+        drag: None,
     };
 
     let native = eframe::NativeOptions::default();
@@ -46,6 +47,18 @@ pub fn run(args: &UiArgs) -> anyhow::Result<()> {
 enum View {
     Overlay,
     Atlas,
+}
+
+#[derive(Clone, Copy)]
+enum DragButton {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy)]
+struct DragOp {
+    button: DragButton,
+    start: (u32, u32),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -87,6 +100,7 @@ struct ViewerApp {
     zoom: f32,
     tolerance: f32,
     cache: Option<Cache>,
+    drag: Option<DragOp>,
 }
 
 fn to_texture(ctx: &egui::Context, name: &str, img: &image::RgbaImage) -> egui::TextureHandle {
@@ -128,6 +142,88 @@ impl ViewerApp {
             tile_width: e.tile_width,
             tile_height: e.tile_height,
             tol_key: (self.tolerance * 10.0).round() as i32,
+        }
+    }
+
+    // Mouse editing on the overlay (screen coords mapped to image pixels):
+    //   left click       -> set offset
+    //   left click-drag   -> draw the tile rectangle (offset + tile size)
+    //   right click-drag  -> set stride from the drag extent (min 1)
+    fn handle_overlay_input(&mut self, ctx: &egui::Context, rect: egui::Rect, resp: &egui::Response) {
+        let zoom = self.zoom.max(0.01);
+        let iw = self.img_w;
+        let ih = self.img_h;
+        let to_px = |p: egui::Pos2| -> (u32, u32) {
+            let x = ((p.x - rect.min.x) / zoom)
+                .floor()
+                .clamp(0.0, iw.saturating_sub(1) as f32) as u32;
+            let y = ((p.y - rect.min.y) / zoom)
+                .floor()
+                .clamp(0.0, ih.saturating_sub(1) as f32) as u32;
+            (x, y)
+        };
+
+        let cur = ctx.input(|i| i.pointer.hover_pos()).map(to_px);
+        let (prim_pressed, sec_pressed, prim_released, sec_released) = ctx.input(|i| {
+            (
+                i.pointer.primary_pressed(),
+                i.pointer.secondary_pressed(),
+                i.pointer.primary_released(),
+                i.pointer.secondary_released(),
+            )
+        });
+        let over = resp.hovered();
+
+        if over && prim_pressed {
+            if let Some(s) = cur {
+                self.drag = Some(DragOp {
+                    button: DragButton::Left,
+                    start: s,
+                });
+            }
+        }
+        if over && sec_pressed {
+            if let Some(s) = cur {
+                self.drag = Some(DragOp {
+                    button: DragButton::Right,
+                    start: s,
+                });
+            }
+        }
+
+        let Some(drag) = self.drag else {
+            return;
+        };
+        if let Some((cx, cy)) = cur {
+            let (sx, sy) = drag.start;
+            match drag.button {
+                DragButton::Left => {
+                    let w = cx.abs_diff(sx);
+                    let h = cy.abs_diff(sy);
+                    if w <= 2 && h <= 2 {
+                        // negligible movement: treat as a click -> set offset
+                        self.edited.offset_x = sx;
+                        self.edited.offset_y = sy;
+                    } else {
+                        self.edited.offset_x = sx.min(cx);
+                        self.edited.offset_y = sy.min(cy);
+                        self.edited.tile_width = w.max(1);
+                        self.edited.tile_height = h.max(1);
+                        // keep stride at least the tile size so the tile fits
+                        self.edited.stride_x = self.edited.stride_x.max(self.edited.tile_width);
+                        self.edited.stride_y = self.edited.stride_y.max(self.edited.tile_height);
+                    }
+                }
+                DragButton::Right => {
+                    self.edited.stride_x = cx.abs_diff(sx).max(1);
+                    self.edited.stride_y = cy.abs_diff(sy).max(1);
+                }
+            }
+            self.normalize_edited();
+        }
+
+        if prim_released || sec_released {
+            self.drag = None;
         }
     }
 
@@ -270,16 +366,26 @@ impl eframe::App for ViewerApp {
         self.ensure_cache(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let cache = self.cache.as_ref().expect("cache built above");
             match self.view {
                 View::Overlay => {
-                    let tex = &cache.overlay;
-                    let sized = egui::load::SizedTexture::new(tex.id(), tex.size_vec2());
+                    let (id, size) = {
+                        let c = self.cache.as_ref().expect("cache built above");
+                        (c.overlay.id(), c.overlay.size_vec2())
+                    };
+                    let sized = egui::load::SizedTexture::new(id, size);
+                    ui.label("click = offset · drag = tile · right-drag = stride");
                     egui::ScrollArea::both().show(ui, |ui| {
-                        ui.add(egui::Image::new(sized).fit_to_original_size(self.zoom));
+                        let img_resp = ui.add(egui::Image::new(sized).fit_to_original_size(self.zoom));
+                        let resp = ui.interact(
+                            img_resp.rect,
+                            egui::Id::new("overlay_canvas"),
+                            egui::Sense::click_and_drag(),
+                        );
+                        self.handle_overlay_input(ctx, img_resp.rect, &resp);
                     });
                 }
                 View::Atlas => {
+                    let cache = self.cache.as_ref().expect("cache built above");
                     let g = &cache.geom;
                     ui.label(format!(
                         "{} unique tiles of {} cells  ·  atlas {} cols  ·  tile {}x{}",
