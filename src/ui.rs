@@ -157,18 +157,29 @@ impl ViewerApp {
 impl eframe::App for ViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let n = self.levels.len();
+        // When a text field / DragValue has focus, leave Tab, arrows and digit
+        // keys to it; only the dedicated F1/F2 keys switch views unconditionally.
+        let editing = ctx.memory(|m| m.focused().is_some());
         ctx.input(|i| {
-            if i.key_pressed(egui::Key::ArrowRight) {
-                self.selected = (self.selected + 1) % n;
+            if i.key_pressed(egui::Key::F1) {
+                self.view = View::Overlay;
             }
-            if i.key_pressed(egui::Key::ArrowLeft) {
-                self.selected = (self.selected + n - 1) % n;
+            if i.key_pressed(egui::Key::F2) {
+                self.view = View::Atlas;
             }
-            if i.key_pressed(egui::Key::Tab) {
-                self.view = match self.view {
-                    View::Overlay => View::Atlas,
-                    View::Atlas => View::Overlay,
-                };
+            if !editing {
+                if i.key_pressed(egui::Key::Num1) {
+                    self.view = View::Overlay;
+                }
+                if i.key_pressed(egui::Key::Num2) {
+                    self.view = View::Atlas;
+                }
+                if i.key_pressed(egui::Key::ArrowRight) {
+                    self.selected = (self.selected + 1) % n;
+                }
+                if i.key_pressed(egui::Key::ArrowLeft) {
+                    self.selected = (self.selected + n - 1) % n;
+                }
             }
         });
 
@@ -200,7 +211,7 @@ impl eframe::App for ViewerApp {
                 ui.label("atlas tol");
                 ui.add(egui::Slider::new(&mut self.tolerance, 0.0..=32.0));
                 ui.separator();
-                ui.label("←/→ config · Tab view");
+                ui.label("←/→ config · F1/F2 (or 1/2) view");
             });
         });
 
