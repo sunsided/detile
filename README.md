@@ -8,7 +8,7 @@ search over the full `tile × margin × offset` parameter space.
 
 | Overlay view | Atlas view |
 |---|---|
-| ![grid overlay on the source image](.readme/overlay.png) | ![recovered deduplicated tileset](.readme/atlas.png) |
+| ![grid overlay on the source image](https://raw.githubusercontent.com/sunsided/detile/main/.readme/overlay.png) | ![recovered deduplicated tileset](https://raw.githubusercontent.com/sunsided/detile/main/.readme/atlas.png) |
 
 The interactive viewer: the **Overlay** shows the detected grid on the source
 (editable by mouse), and the **Atlas** shows the deduplicated tileset recovered

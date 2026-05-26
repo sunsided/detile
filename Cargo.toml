@@ -10,7 +10,7 @@ description = "Detect regular tile grids in images (sprite sheets, tile atlases,
 readme = "README.md"
 keywords = ["tilemap", "spritesheet", "tileset", "grid", "atlas"]
 categories = ["command-line-utilities", "multimedia::images", "computer-vision", "game-development", "graphics"]
-exclude = ["reference/"]
+exclude = ["reference/", ".readme/"]
 
 [[bin]]
 name = "tile-detect"
