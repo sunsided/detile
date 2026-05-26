@@ -6,6 +6,14 @@ Reduces the image to 1D axis signals, finds periodic strides by autocorrelation,
 refines offsets, and splits each stride into tile size plus margin. No brute-force
 search over the full `tile × margin × offset` parameter space.
 
+| Overlay view | Atlas view |
+|---|---|
+| ![grid overlay on the source image](.readme/overlay.png) | ![recovered deduplicated tileset](.readme/atlas.png) |
+
+The interactive viewer: the **Overlay** shows the detected grid on the source
+(editable by mouse), and the **Atlas** shows the deduplicated tileset recovered
+from that grid.
+
 ## Install / build
 
 ```bash
