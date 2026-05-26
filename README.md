@@ -20,6 +20,8 @@ Binary: `target/release/tile-detect`. Library crate: `detile`.
 tile-detect image.png
 tile-detect image.png --json
 tile-detect image.png --debug-overlay out.png
+tile-detect image.png --atlas tileset.png        # recovered deduped tileset
+tile-detect image.png --atlas tileset.png --atlas-tolerance 0   # exact (PNG)
 tile-detect image.png --min-stride 8 --max-stride 256
 tile-detect image.png --top-candidates 20
 tile-detect image.png --prefer-square
@@ -32,6 +34,24 @@ macro layout) instead of just the strongest, each as its own row. Harmonic
 multiples of a scale are folded into their fundamental. When several scales are
 nested (e.g. a 4px texture inside a 16px tile inside a 40px room), the dominant
 one is reported; use `--min-stride` / `--max-stride` to target a specific scale.
+
+## Interactive viewer
+
+An egui viewer lets you flick through the detected configurations and inspect
+the recovered tileset. It is behind the optional `ui` feature:
+
+```bash
+cargo run --release --features ui -- ui image.png
+cargo run --release --features ui -- ui image.png --min-stride 12 --max-stride 28
+```
+
+- Dropdown / `←` `→` arrows: switch between detected grid configurations
+- `Overlay` view: the source image with the grid drawn on top
+- `Atlas` view: every grid cell deduplicated into the unique tileset, packed
+  into one image (hover a tile for its index)
+- `Tab`: toggle Overlay / Atlas · zoom slider scales the view
+
+Without `--features ui`, the `ui` subcommand prints a hint to rebuild with it.
 
 Text output:
 

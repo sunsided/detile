@@ -88,6 +88,7 @@ tasks:
       - task: examples:world
       - task: examples:world:json
       - task: examples:world:overlay
+      - task: examples:world:atlas
       - task: examples:vertigo
       - task: examples:vertigo:levels
       - task: examples:vertigo:tile
@@ -111,6 +112,13 @@ tasks:
       - mkdir -p {{.OUT}}
       - '{{.BIN}} {{.WORLD}} --debug-overlay {{.OUT}}/world-overlay.png'
 
+  examples:world:atlas:
+    desc: Recover the world map tileset into a deduplicated atlas PNG
+    deps: [build:release]
+    cmds:
+      - mkdir -p {{.OUT}}
+      - '{{.BIN}} {{.WORLD}} --atlas {{.OUT}}/world-atlas.png'
+
   examples:vertigo:
     desc: 'Detect the vertigo map (default picks the dominant 4px texture)'
     deps: [build:release]
@@ -129,3 +137,23 @@ tasks:
     cmds:
       - mkdir -p {{.OUT}}
       - '{{.BIN}} {{.VERTIGO}} --min-stride 12 --max-stride 28 --min-confidence 0.1 --debug-overlay {{.OUT}}/vertigo-tile-overlay.png'
+
+  # --- Interactive viewer (egui, requires the `ui` feature) ------------------
+
+  ui:
+    desc: 'Launch the interactive viewer (task ui -- IMAGE [flags])'
+    preconditions:
+      - sh: command -v cargo
+        msg: "cargo not found — install Rust from https://rustup.rs/"
+    cmds:
+      - cargo run --release --features ui -- ui {{.CLI_ARGS}}
+
+  ui:world:
+    desc: Open the world map in the interactive viewer
+    cmds:
+      - cargo run --release --features ui -- ui {{.WORLD}}
+
+  ui:vertigo:
+    desc: Open the vertigo map in the interactive viewer (tile band)
+    cmds:
+      - cargo run --release --features ui -- ui {{.VERTIGO}} --min-stride 12 --max-stride 28

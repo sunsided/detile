@@ -1,40 +1,60 @@
 mod cli;
+#[cfg(feature = "ui")]
+mod ui;
 
 use anyhow::Context;
 use clap::Parser;
-use cli::Cli;
+use cli::{Cli, Command};
 use detile::{detect_levels, detect_tiling, draw_overlay, DetectOptions, DetectionResult, GridDetection};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    let img = image::open(&cli.image)
-        .with_context(|| format!("failed to open image: {}", cli.image.display()))?;
+    if let Some(Command::Ui(args)) = &cli.command {
+        #[cfg(feature = "ui")]
+        {
+            return ui::run(args);
+        }
+        #[cfg(not(feature = "ui"))]
+        {
+            let _ = args;
+            anyhow::bail!("ui not built — rebuild with: cargo build --features ui");
+        }
+    }
+
+    let d = &cli.detect;
+    let image_path = d
+        .image
+        .as_ref()
+        .context("image path required (usage: tile-detect <IMAGE>)")?;
+
+    let img = image::open(image_path)
+        .with_context(|| format!("failed to open image: {}", image_path.display()))?;
 
     let options = DetectOptions {
-        min_stride: cli.min_stride,
-        max_stride: cli.max_stride,
-        max_margin: cli.max_margin,
-        top_candidates: cli.top_candidates,
-        prefer_square: cli.prefer_square,
-        allow_margin: !cli.no_margin,
-        min_confidence: cli.min_confidence,
+        min_stride: d.min_stride,
+        max_stride: d.max_stride,
+        max_margin: d.max_margin,
+        top_candidates: d.top_candidates,
+        prefer_square: d.prefer_square,
+        allow_margin: !d.no_margin,
+        min_confidence: d.min_confidence,
     };
 
-    if let Some(n) = cli.levels {
+    if let Some(n) = d.levels {
         // Widen the candidate pool so distinct scales survive enumeration.
         let level_opts = DetectOptions {
-            top_candidates: cli.top_candidates.max(16),
+            top_candidates: d.top_candidates.max(16),
             ..options.clone()
         };
         let levels = detect_levels(&img, &level_opts, n)?;
-        print_levels(&levels, cli.json)?;
+        print_levels(&levels, d.json)?;
         return Ok(());
     }
 
     let result = detect_tiling(&img, &options)?;
 
-    if cli.json {
+    if d.json {
         let json_val = match &result {
             DetectionResult::Found(d) => serde_json::json!({
                 "detected": true,
@@ -86,7 +106,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    if let Some(overlay_path) = &cli.debug_overlay {
+    if let Some(overlay_path) = &d.debug_overlay {
         match &result {
             DetectionResult::Found(detection) => {
                 let overlay = draw_overlay(&img, detection);
@@ -97,6 +117,27 @@ fn main() -> anyhow::Result<()> {
             }
             DetectionResult::NotFound { .. } => {
                 eprintln!("no tiling detected; overlay not saved");
+            }
+        }
+    }
+
+    if let Some(atlas_path) = &d.atlas {
+        match &result {
+            DetectionResult::Found(detection) => {
+                let atlas = detile::build_atlas(&img, detection, d.atlas_tolerance);
+                atlas
+                    .image
+                    .save(atlas_path)
+                    .with_context(|| format!("failed to save atlas: {}", atlas_path.display()))?;
+                eprintln!(
+                    "atlas saved to {} ({} unique tiles of {} cells)",
+                    atlas_path.display(),
+                    atlas.unique_count,
+                    atlas.total_cells
+                );
+            }
+            DetectionResult::NotFound { .. } => {
+                eprintln!("no tiling detected; atlas not saved");
             }
         }
     }
