@@ -46,10 +46,14 @@ cargo run --release --features ui -- ui image.png --min-stride 12 --max-stride 2
 ```
 
 - Dropdown / `←` `→` arrows: switch between detected grid configurations
+- Left panel: edit offset / stride / tile per axis; margin and grid counts are
+  re-derived and the overlay + atlas update live. `Reset to candidate` restores
+  the detected values. Useful when detection locks onto a near-miss offset.
 - `Overlay` view: the source image with the grid drawn on top
 - `Atlas` view: every grid cell deduplicated into the unique tileset, packed
   into one image (hover a tile for its index)
-- `Tab`: toggle Overlay / Atlas · zoom slider scales the view
+- `Tab`: toggle Overlay / Atlas · zoom slider scales the view · atlas tol slider
+  controls dedup tolerance
 
 Without `--features ui`, the `ui` subcommand prints a hint to rebuild with it.
 
