@@ -1,6 +1,6 @@
 [package]
 name = "detile"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Markus Mayer <widemeadows@gmail.com>"]
 repository = "https://github.com/sunsided/detile"
@@ -13,7 +13,7 @@ categories = ["command-line-utilities", "multimedia::images", "computer-vision",
 exclude = ["reference/", ".readme/"]
 
 [[bin]]
-name = "tile-detect"
+name = "detile"
 path = "src/main.rs"
 
 [features]

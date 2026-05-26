@@ -1,7 +1,7 @@
 version: '3'
 
 vars:
-  BIN: target/release/tile-detect
+  BIN: target/release/detile
   WORLD: reference/clouds-of-xeen-world.jpg
   VERTIGO: reference/clouds-of-xeen-vertigo.jpg
   OUT: out
@@ -13,7 +13,7 @@ tasks:
     silent: true
 
   build:
-    desc: Build the tile-detect binary (debug)
+    desc: Build the detile binary (debug)
     preconditions:
       - sh: command -v cargo
         msg: "cargo not found — install Rust from https://rustup.rs/"
@@ -32,7 +32,7 @@ tasks:
       - cargo build --release
 
   run:
-    desc: 'Run tile-detect with arbitrary args (task run -- IMAGE --json)'
+    desc: 'Run detile with arbitrary args (task run -- IMAGE --json)'
     deps: [build:release]
     cmds:
       - '{{.BIN}} {{.CLI_ARGS}}'

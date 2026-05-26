@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = "tile-detect", about = "Detect regular tile grids in images")]
+#[command(name = "detile", about = "Detect regular tile grids in images")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,

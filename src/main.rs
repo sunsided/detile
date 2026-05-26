@@ -26,7 +26,7 @@ fn main() -> anyhow::Result<()> {
     let image_path = d
         .image
         .as_ref()
-        .context("image path required (usage: tile-detect <IMAGE>)")?;
+        .context("image path required (usage: detile <IMAGE>)")?;
 
     let img = image::open(image_path)
         .with_context(|| format!("failed to open image: {}", image_path.display()))?;

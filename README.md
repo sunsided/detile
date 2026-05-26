@@ -16,25 +16,34 @@ from that grid.
 
 ## Install / build
 
+Install the `detile` binary from crates.io:
+
+```bash
+cargo install --locked detile
+cargo install --locked --features ui detile   # with the interactive viewer
+```
+
+Or build from source:
+
 ```bash
 cargo build --release
 ```
 
-Binary: `target/release/tile-detect`. Library crate: `detile`.
+Binary: `target/release/detile`. Library crate: `detile`.
 
 ## CLI
 
 ```bash
-tile-detect image.png
-tile-detect image.png --json
-tile-detect image.png --debug-overlay out.png
-tile-detect image.png --atlas tileset.png        # recovered deduped tileset
-tile-detect image.png --atlas tileset.png --atlas-tolerance 0   # exact (PNG)
-tile-detect image.png --min-stride 8 --max-stride 256
-tile-detect image.png --top-candidates 20
-tile-detect image.png --prefer-square
-tile-detect image.png --no-margin
-tile-detect image.png --levels 6
+detile image.png
+detile image.png --json
+detile image.png --debug-overlay out.png
+detile image.png --atlas tileset.png        # recovered deduped tileset
+detile image.png --atlas tileset.png --atlas-tolerance 0   # exact (PNG)
+detile image.png --min-stride 8 --max-stride 256
+detile image.png --top-candidates 20
+detile image.png --prefer-square
+detile image.png --no-margin
+detile image.png --levels 6
 ```
 
 `--levels N` reports every distinct periodic scale (fine texture, base tile,
