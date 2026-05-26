@@ -31,6 +31,10 @@ pub struct Cli {
     #[arg(long, default_value_t = 10)]
     pub top_candidates: usize,
 
+    /// Report all distinct grid scales (texture / tile / layout), up to N
+    #[arg(long, value_name = "N")]
+    pub levels: Option<usize>,
+
     /// Boost square tiles in scoring
     #[arg(long)]
     pub prefer_square: bool,

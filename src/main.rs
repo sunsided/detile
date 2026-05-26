@@ -3,7 +3,7 @@ mod cli;
 use anyhow::Context;
 use clap::Parser;
 use cli::Cli;
-use detile::{draw_overlay, detect_tiling, DetectOptions, DetectionResult};
+use detile::{detect_levels, detect_tiling, draw_overlay, DetectOptions, DetectionResult, GridDetection};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -20,6 +20,17 @@ fn main() -> anyhow::Result<()> {
         allow_margin: !cli.no_margin,
         min_confidence: cli.min_confidence,
     };
+
+    if let Some(n) = cli.levels {
+        // Widen the candidate pool so distinct scales survive enumeration.
+        let level_opts = DetectOptions {
+            top_candidates: cli.top_candidates.max(16),
+            ..options.clone()
+        };
+        let levels = detect_levels(&img, &level_opts, n)?;
+        print_levels(&levels, cli.json)?;
+        return Ok(());
+    }
 
     let result = detect_tiling(&img, &options)?;
 
@@ -90,5 +101,56 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn print_levels(levels: &[GridDetection], json: bool) -> anyhow::Result<()> {
+    if json {
+        let arr: Vec<_> = levels
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "detected": d.detected,
+                    "tile_width": d.tile_width,
+                    "tile_height": d.tile_height,
+                    "stride_x": d.stride_x,
+                    "stride_y": d.stride_y,
+                    "offset_x": d.offset_x,
+                    "offset_y": d.offset_y,
+                    "margin_x": d.margin_x,
+                    "margin_y": d.margin_y,
+                    "columns": d.columns,
+                    "rows": d.rows,
+                    "confidence": d.confidence,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&arr)?);
+        return Ok(());
+    }
+
+    if levels.is_empty() {
+        println!("no grid levels detected");
+        return Ok(());
+    }
+
+    println!("detected {} grid level(s):", levels.len());
+    for (i, d) in levels.iter().enumerate() {
+        println!(
+            "  [{}] tile {}x{}  stride {}x{}  offset {}x{}  margin {}x{}  grid {}x{}  conf {:.2}",
+            i + 1,
+            d.tile_width,
+            d.tile_height,
+            d.stride_x,
+            d.stride_y,
+            d.offset_x,
+            d.offset_y,
+            d.margin_x,
+            d.margin_y,
+            d.columns,
+            d.rows,
+            d.confidence,
+        );
+    }
     Ok(())
 }

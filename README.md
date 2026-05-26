@@ -24,7 +24,14 @@ tile-detect image.png --min-stride 8 --max-stride 256
 tile-detect image.png --top-candidates 20
 tile-detect image.png --prefer-square
 tile-detect image.png --no-margin
+tile-detect image.png --levels 6
 ```
+
+`--levels N` reports every distinct periodic scale (fine texture, base tile,
+macro layout) instead of just the strongest, each as its own row. Harmonic
+multiples of a scale are folded into their fundamental. When several scales are
+nested (e.g. a 4px texture inside a 16px tile inside a 40px room), the dominant
+one is reported; use `--min-stride` / `--max-stride` to target a specific scale.
 
 Text output:
 

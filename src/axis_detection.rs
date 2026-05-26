@@ -2,17 +2,96 @@ use rayon::prelude::*;
 
 use crate::image_signals::smooth;
 use crate::margin_detection::{
-    compute_axis_stats, infer_tile_and_margin, local_peak, score_coverage, score_offset, AxisStats,
+    compute_axis_stats, infer_tile_and_margin, local_peak, score_coverage, score_offset,
 };
 use crate::periodicity::{autocorrelation_candidates, expand_harmonics};
 use crate::types::{AxisDetection, DetectOptions};
 
+// Single best-ranked stride per axis: score all candidates, collapse harmonic
+// relatives toward the fundamental, sort by confidence.
 pub fn detect_axis(
     edge: &[f32],
     alpha: &[f32],
     variance: &[f32],
     axis_len: usize,
     options: &DetectOptions,
+) -> Vec<AxisDetection> {
+    let mut candidates = score_axis_candidates(edge, alpha, variance, axis_len, options, true);
+    refine_harmonics(&mut candidates, edge, axis_len);
+    candidates.sort_unstable_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    candidates.truncate(options.top_candidates);
+    candidates
+}
+
+// Distinct periodic scales present on an axis (texture / tile / macro layout),
+// each kept as its own level. Unlike `detect_axis`, harmonic relatives are NOT
+// collapsed, so a 16px tile grid survives alongside a 4px texture and a 40px
+// room structure. Near-equal strides (within ~6% or 2px) are merged.
+pub fn axis_levels(
+    edge: &[f32],
+    alpha: &[f32],
+    variance: &[f32],
+    axis_len: usize,
+    options: &DetectOptions,
+) -> Vec<AxisDetection> {
+    // Score only the autocorrelation peaks (no harmonic expansion), so levels
+    // come from genuine periodicities rather than coincidental large lags.
+    let mut candidates = score_axis_candidates(edge, alpha, variance, axis_len, options, false);
+
+    // Fold harmonics by walking strides ascending. A stride is folded into a
+    // smaller kept stride when it is near-equal or an (tolerant) integer
+    // multiple of it - the same grid sampled coarser (e.g. 120 = 6*20, or
+    // 202 ~= 10*20). Such a stride is dropped UNLESS its periodicity is notably
+    // stronger, in which case it is a real coarser structure and kept as its
+    // own level. What remains are genuinely distinct, dominant scales.
+    candidates.sort_unstable_by_key(|c| c.stride);
+    let mut kept: Vec<AxisDetection> = Vec::new();
+    for cand in candidates {
+        if cand.periodicity_score < 0.5 {
+            continue;
+        }
+        let mut redundant = false;
+        for k in &kept {
+            let lo = k.stride.min(cand.stride);
+            let hi = k.stride.max(cand.stride);
+            if lo == 0 {
+                continue;
+            }
+            let tol = 2.0_f32.max(0.06 * hi as f32);
+            let rem = (hi % lo) as f32;
+            let near_equal = (hi - lo) as f32 <= tol;
+            let near_multiple = rem <= tol || (lo as f32 - rem) <= tol;
+            if (near_equal || near_multiple)
+                && cand.periodicity_score <= k.periodicity_score + 0.04
+            {
+                redundant = true;
+                break;
+            }
+        }
+        if !redundant {
+            kept.push(cand);
+        }
+    }
+
+    kept.sort_unstable_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    kept
+}
+
+fn score_axis_candidates(
+    edge: &[f32],
+    alpha: &[f32],
+    variance: &[f32],
+    axis_len: usize,
+    options: &DetectOptions,
+    expand: bool,
 ) -> Vec<AxisDetection> {
     let min_stride = options.min_stride as usize;
     let max_stride = options
@@ -44,7 +123,11 @@ pub fn detect_axis(
 
     let top_n = options.top_candidates.max(5);
     let initial = autocorrelation_candidates(&smoothed, min_stride, max_stride, top_n);
-    let all_strides = expand_harmonics(&initial, min_stride, max_stride);
+    let all_strides: Vec<u32> = if expand {
+        expand_harmonics(&initial, min_stride, max_stride)
+    } else {
+        initial.iter().map(|c| c.stride).collect()
+    };
 
     if all_strides.is_empty() {
         return Vec::new();
@@ -56,7 +139,7 @@ pub fn detect_axis(
     let mean = smoothed.iter().sum::<f32>() / smoothed.len() as f32;
     let centered: Vec<f32> = smoothed.iter().map(|&v| v - mean).collect();
 
-    let mut candidates: Vec<AxisDetection> = all_strides
+    let candidates: Vec<AxisDetection> = all_strides
         .par_iter()
         .filter_map(|&stride| {
             let s = stride as usize;
@@ -179,14 +262,6 @@ pub fn detect_axis(
         })
         .collect();
 
-    refine_harmonics(&mut candidates, edge, axis_len, &stats);
-
-    candidates.sort_unstable_by(|a, b| {
-        b.confidence
-            .partial_cmp(&a.confidence)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    candidates.truncate(options.top_candidates);
     candidates
 }
 
@@ -264,12 +339,7 @@ fn content_asymmetry(variance: &[f32], stride: usize, offset: usize, axis_len: u
 // 2. Prefer the fundamental: penalize a larger stride that is an exact multiple
 //    of a near-equal smaller stride, so the smallest period that explains the
 //    data wins (kills 2x/3x/6x multiples of the true tile).
-fn refine_harmonics(
-    candidates: &mut [AxisDetection],
-    edge: &[f32],
-    axis_len: usize,
-    _stats: &AxisStats,
-) {
+fn refine_harmonics(candidates: &mut [AxisDetection], edge: &[f32], axis_len: usize) {
     // Step 1: sub-harmonic demotion
     for c in candidates.iter_mut() {
         let s = c.stride as usize;

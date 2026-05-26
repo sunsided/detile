@@ -1,4 +1,4 @@
-use detile::{detect_tiling, DetectOptions, DetectionResult};
+use detile::{detect_levels, detect_tiling, DetectOptions, DetectionResult};
 use image::{DynamicImage, Rgba, RgbaImage};
 
 // ---------------------------------------------------------------------------
@@ -311,6 +311,23 @@ fn test8_random_noise_not_detected() {
             // Correct - noise should not look like a grid
         }
     }
+}
+
+#[test]
+fn test10_levels_single_clean_grid() {
+    // A clean single-scale grid should yield exactly one level at that scale.
+    let img = as_dynamic(make_tiled_image(18, 18, 30, 20, 0, 0, 0, 0, [128u8, 128, 128, 255]));
+    let levels = detect_levels(&img, &default_opts(), 6).unwrap();
+    assert!(!levels.is_empty(), "expected at least one level");
+    let top = &levels[0];
+    assert_eq!(top.stride_x, 18, "stride_x={}", top.stride_x);
+    assert_eq!(top.stride_y, 18, "stride_y={}", top.stride_y);
+    // Harmonic multiples (36, 54, ...) must be folded, not listed separately.
+    assert!(
+        levels.len() <= 2,
+        "clean grid should not produce many levels, got {}",
+        levels.len()
+    );
 }
 
 #[test]
