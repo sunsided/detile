@@ -1,0 +1,131 @@
+version: '3'
+
+vars:
+  BIN: target/release/tile-detect
+  WORLD: reference/clouds-of-xeen-world.jpg
+  VERTIGO: reference/clouds-of-xeen-vertigo.jpg
+  OUT: out
+
+tasks:
+  default:
+    cmds:
+      - task --list --sort=none
+    silent: true
+
+  build:
+    desc: Build the tile-detect binary (debug)
+    preconditions:
+      - sh: command -v cargo
+        msg: "cargo not found — install Rust from https://rustup.rs/"
+    sources: [Cargo.toml, Cargo.lock, 'src/**/*.rs']
+    cmds:
+      - cargo build
+
+  build:release:
+    desc: Build the optimized release binary
+    preconditions:
+      - sh: command -v cargo
+        msg: "cargo not found — install Rust from https://rustup.rs/"
+    sources: [Cargo.toml, Cargo.lock, 'src/**/*.rs']
+    generates: ['{{.BIN}}']
+    cmds:
+      - cargo build --release
+
+  run:
+    desc: 'Run tile-detect with arbitrary args (task run -- IMAGE --json)'
+    deps: [build:release]
+    cmds:
+      - '{{.BIN}} {{.CLI_ARGS}}'
+
+  test:
+    desc: Run the full test suite
+    preconditions:
+      - sh: command -v cargo
+        msg: "cargo not found — install Rust from https://rustup.rs/"
+    cmds:
+      - cargo test {{.CLI_ARGS}}
+
+  fmt:
+    desc: Format code
+    aliases: [format]
+    cmds:
+      - cargo fmt
+
+  lint:
+    desc: Lint with clippy (read-only)
+    cmds:
+      - cargo clippy --all-targets -- -D warnings
+
+  lint:fix:
+    desc: Lint and apply clippy auto-fixes
+    aliases: [fix]
+    cmds:
+      - cargo clippy --fix --all-targets --allow-dirty --allow-staged
+
+  check:
+    desc: All static checks (fmt + lint)
+    cmds:
+      - cargo fmt --check
+      - cargo clippy --all-targets -- -D warnings
+
+  ci:
+    desc: Full CI sequence (check + test)
+    cmds:
+      - task: check
+      - task: test
+
+  clean:
+    desc: Remove build output and generated overlays
+    cmds:
+      - cargo clean
+      - rm -rf {{.OUT}}
+
+  # --- Example runs on the bundled reference images ---------------------------
+
+  examples:
+    desc: Run every reference-image example
+    cmds:
+      - task: examples:world
+      - task: examples:world:json
+      - task: examples:world:overlay
+      - task: examples:vertigo
+      - task: examples:vertigo:levels
+      - task: examples:vertigo:tile
+
+  examples:world:
+    desc: 'Detect the world map grid (expect 20x16, conf ~0.93)'
+    deps: [build:release]
+    cmds:
+      - '{{.BIN}} {{.WORLD}}'
+
+  examples:world:json:
+    desc: World map detection as JSON with diagnostics
+    deps: [build:release]
+    cmds:
+      - '{{.BIN}} {{.WORLD}} --json'
+
+  examples:world:overlay:
+    desc: World map detection with a grid overlay PNG
+    deps: [build:release]
+    cmds:
+      - mkdir -p {{.OUT}}
+      - '{{.BIN}} {{.WORLD}} --debug-overlay {{.OUT}}/world-overlay.png'
+
+  examples:vertigo:
+    desc: 'Detect the vertigo map (default picks the dominant 4px texture)'
+    deps: [build:release]
+    cmds:
+      - '{{.BIN}} {{.VERTIGO}}'
+
+  examples:vertigo:levels:
+    desc: List the distinct grid scales present in the vertigo map
+    deps: [build:release]
+    cmds:
+      - '{{.BIN}} {{.VERTIGO}} --levels 6 --min-stride 8'
+
+  examples:vertigo:tile:
+    desc: 'Isolate the vertigo base tile band (~16-20px)'
+    deps: [build:release]
+    cmds:
+      - mkdir -p {{.OUT}}
+      - '{{.BIN}} {{.VERTIGO}} --min-stride 12 --max-stride 28 --min-confidence 0.1 --debug-overlay {{.OUT}}/vertigo-tile-overlay.png'
