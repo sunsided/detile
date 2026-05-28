@@ -36,7 +36,7 @@ pub fn run(args: &UiArgs) -> anyhow::Result<()> {
         layers_threshold: 15.0,
         layers_use_median: false,
         layers_bases: 1,
-        quant_enabled: true,
+        quant_enabled: false,
         quant_colors: 256,
         cache: None,
         drag: None,
@@ -93,11 +93,13 @@ struct AtlasGeom {
 
 struct Cache {
     key: CacheKey,
+    work_src: image::DynamicImage,
     overlay: egui::TextureHandle,
     atlas: egui::TextureHandle,
     geom: AtlasGeom,
+    layers_ready: bool,
     bases: Vec<egui::TextureHandle>,
-    detail_atlas: egui::TextureHandle,
+    detail_atlas: Option<egui::TextureHandle>,
     decomp_cols: u32,
     decomp_rows: u32,
     decomp_tw: u32,
@@ -267,16 +269,10 @@ impl ViewerApp {
             self.source.clone()
         };
         let atlas = build_atlas(&work_src, &self.edited, self.tolerance, 0);
-        let layer_mode = if self.layers_use_median {
-            LayerBaseMode::Median
-        } else {
-            LayerBaseMode::Mode
-        };
-        let decomp =
-            decompose_layers(&work_src, &self.edited, layer_mode, self.layers_threshold, 0, self.layers_bases);
 
         self.cache = Some(Cache {
             key,
+            work_src,
             overlay: to_texture(ctx, "overlay", &overlay_img),
             atlas: to_texture(ctx, "atlas", &atlas.image),
             geom: AtlasGeom {
@@ -287,19 +283,45 @@ impl ViewerApp {
                 unique: atlas.unique_count,
                 total: atlas.total_cells,
             },
-            bases: decomp
-                .bases
-                .iter()
-                .enumerate()
-                .map(|(i, b)| to_texture(ctx, &format!("base_{i}"), b))
-                .collect(),
-            detail_atlas: to_texture(ctx, "detail_atlas", &decomp.detail_atlas),
-            decomp_cols: decomp.columns,
-            decomp_rows: decomp.rows,
-            decomp_tw: decomp.tile_width,
-            decomp_th: decomp.tile_height,
-            decomp_total: decomp.total_cells,
+            layers_ready: false,
+            bases: Vec::new(),
+            detail_atlas: None,
+            decomp_cols: 0,
+            decomp_rows: 0,
+            decomp_tw: 0,
+            decomp_th: 0,
+            decomp_total: 0,
         });
+    }
+
+    fn ensure_layers(&mut self, ctx: &egui::Context) {
+        if self.cache.as_ref().map(|c| c.layers_ready).unwrap_or(true) {
+            return;
+        }
+        let layer_mode = if self.layers_use_median { LayerBaseMode::Median } else { LayerBaseMode::Mode };
+        let work_src = self.cache.as_ref().unwrap().work_src.clone();
+        let decomp = decompose_layers(
+            &work_src,
+            &self.edited,
+            layer_mode,
+            self.layers_threshold,
+            0,
+            self.layers_bases,
+        );
+        let cache = self.cache.as_mut().unwrap();
+        cache.bases = decomp
+            .bases
+            .iter()
+            .enumerate()
+            .map(|(i, b)| to_texture(ctx, &format!("base_{i}"), b))
+            .collect();
+        cache.detail_atlas = Some(to_texture(ctx, "detail_atlas", &decomp.detail_atlas));
+        cache.decomp_cols = decomp.columns;
+        cache.decomp_rows = decomp.rows;
+        cache.decomp_tw = decomp.tile_width;
+        cache.decomp_th = decomp.tile_height;
+        cache.decomp_total = decomp.total_cells;
+        cache.layers_ready = true;
     }
 }
 
@@ -435,6 +457,9 @@ impl eframe::App for ViewerApp {
             });
 
         self.ensure_cache(ctx);
+        if self.view == View::Layers {
+            self.ensure_layers(ctx);
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             match self.view {
@@ -486,65 +511,71 @@ impl eframe::App for ViewerApp {
                     });
                 }
                 View::Layers => {
-                    // Extract cheap-copy data from cache before closures borrow self
-                    let (bases_info, detail_id, detail_sz, tw, th, cols, rows, total) = {
-                        let c = self.cache.as_ref().expect("cache built above");
-                        let bi: Vec<(egui::TextureId, egui::Vec2)> = c
-                            .bases
-                            .iter()
-                            .map(|b| (b.id(), b.size_vec2()))
-                            .collect();
-                        (
-                            bi,
-                            c.detail_atlas.id(),
-                            c.detail_atlas.size_vec2(),
-                            c.decomp_tw,
-                            c.decomp_th,
-                            c.decomp_cols,
-                            c.decomp_rows,
-                            c.decomp_total,
-                        )
-                    };
-                    ui.label(format!(
-                        "{}×{} tile  ·  {} cells ({}×{} grid)  ·  {} base(s)  ·  thr {:.1}  ·  {}",
-                        tw,
-                        th,
-                        total,
-                        cols,
-                        rows,
-                        bases_info.len(),
-                        self.layers_threshold,
-                        if self.layers_use_median { "median" } else { "mode" },
-                    ));
-                    ui.separator();
+                    let layers_ready = self.cache.as_ref().map(|c| c.layers_ready).unwrap_or(false);
+                    if !layers_ready {
+                        ui.label("Computing layers...");
+                    } else {
+                        // Extract cheap-copy data from cache before closures borrow self
+                        let (bases_info, detail_id, detail_sz, tw, th, cols, rows, total) = {
+                            let c = self.cache.as_ref().expect("cache built above");
+                            let bi: Vec<(egui::TextureId, egui::Vec2)> = c
+                                .bases
+                                .iter()
+                                .map(|b| (b.id(), b.size_vec2()))
+                                .collect();
+                            let da = c.detail_atlas.as_ref().expect("layers_ready implies detail_atlas");
+                            (
+                                bi,
+                                da.id(),
+                                da.size_vec2(),
+                                c.decomp_tw,
+                                c.decomp_th,
+                                c.decomp_cols,
+                                c.decomp_rows,
+                                c.decomp_total,
+                            )
+                        };
+                        ui.label(format!(
+                            "{}×{} tile  ·  {} cells ({}×{} grid)  ·  {} base(s)  ·  thr {:.1}  ·  {}",
+                            tw,
+                            th,
+                            total,
+                            cols,
+                            rows,
+                            bases_info.len(),
+                            self.layers_threshold,
+                            if self.layers_use_median { "median" } else { "mode" },
+                        ));
+                        ui.separator();
 
-                    let base_zoom = self.zoom.max((64.0 / tw.max(1) as f32).ceil());
-                    let zoom = self.zoom;
-                    ui.columns(2, |cols_ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("bases_scroll")
-                            .show(&mut cols_ui[0], |ui| {
-                                for (i, (id, sz)) in bases_info.iter().enumerate() {
-                                    ui.label(format!("Base {}  ({}×{})", i, tw, th));
+                        let base_zoom = self.zoom.max((64.0 / tw.max(1) as f32).ceil());
+                        let zoom = self.zoom;
+                        ui.columns(2, |cols_ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt("bases_scroll")
+                                .show(&mut cols_ui[0], |ui| {
+                                    for (i, (id, sz)) in bases_info.iter().enumerate() {
+                                        ui.label(format!("Base {}  ({}×{})", i, tw, th));
+                                        ui.add(
+                                            egui::Image::new(egui::load::SizedTexture::new(*id, *sz))
+                                                .fit_to_original_size(base_zoom),
+                                        );
+                                        ui.add_space(4.0);
+                                    }
+                                });
+                            cols_ui[1].label("Detail atlas (transparent = matches assigned base)");
+                            egui::ScrollArea::both()
+                                .id_salt("detail_scroll")
+                                .show(&mut cols_ui[1], |ui| {
                                     ui.add(
-                                        egui::Image::new(egui::load::SizedTexture::new(*id, *sz))
-                                            .fit_to_original_size(base_zoom),
+                                        egui::Image::new(egui::load::SizedTexture::new(
+                                            detail_id, detail_sz,
+                                        ))
+                                        .fit_to_original_size(zoom),
                                     );
-                                    ui.add_space(4.0);
-                                }
-                            });
-                        cols_ui[1].label("Detail atlas (transparent = matches assigned base)");
-                        egui::ScrollArea::both()
-                            .id_salt("detail_scroll")
-                            .show(&mut cols_ui[1], |ui| {
-                                ui.add(
-                                    egui::Image::new(egui::load::SizedTexture::new(
-                                        detail_id, detail_sz,
-                                    ))
-                                    .fit_to_original_size(zoom),
-                                );
-                            });
-                    });
+                                });
+                        });
+                    }
                 }
             }
         });
