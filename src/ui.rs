@@ -2,7 +2,7 @@ use anyhow::Context;
 use eframe::egui;
 
 use crate::cli::UiArgs;
-use detile::{build_atlas, detect_levels, draw_overlay, DetectOptions, GridDetection};
+use detile::{build_atlas, decompose_layers, detect_levels, draw_overlay, quantize_image, DetectOptions, GridDetection, LayerBaseMode};
 
 pub fn run(args: &UiArgs) -> anyhow::Result<()> {
     let img = image::open(&args.image)
@@ -33,6 +33,11 @@ pub fn run(args: &UiArgs) -> anyhow::Result<()> {
         view: View::Overlay,
         zoom: 4.0,
         tolerance: 8.0,
+        layers_threshold: 15.0,
+        layers_use_median: false,
+        layers_bases: 1,
+        quant_enabled: true,
+        quant_colors: 256,
         cache: None,
         drag: None,
     };
@@ -47,6 +52,7 @@ pub fn run(args: &UiArgs) -> anyhow::Result<()> {
 enum View {
     Overlay,
     Atlas,
+    Layers,
 }
 
 #[derive(Clone, Copy)]
@@ -70,6 +76,10 @@ struct CacheKey {
     tile_width: u32,
     tile_height: u32,
     tol_key: i32,
+    layers_tol_key: i32,
+    layers_use_median: bool,
+    layers_bases: u32,
+    quant_key: u32,
 }
 
 struct AtlasGeom {
@@ -86,6 +96,13 @@ struct Cache {
     overlay: egui::TextureHandle,
     atlas: egui::TextureHandle,
     geom: AtlasGeom,
+    bases: Vec<egui::TextureHandle>,
+    detail_atlas: egui::TextureHandle,
+    decomp_cols: u32,
+    decomp_rows: u32,
+    decomp_tw: u32,
+    decomp_th: u32,
+    decomp_total: u32,
 }
 
 struct ViewerApp {
@@ -99,6 +116,11 @@ struct ViewerApp {
     view: View,
     zoom: f32,
     tolerance: f32,
+    layers_threshold: f32,
+    layers_use_median: bool,
+    layers_bases: u32,
+    quant_enabled: bool,
+    quant_colors: u32,
     cache: Option<Cache>,
     drag: Option<DragOp>,
 }
@@ -142,6 +164,10 @@ impl ViewerApp {
             tile_width: e.tile_width,
             tile_height: e.tile_height,
             tol_key: (self.tolerance * 10.0).round() as i32,
+            layers_tol_key: (self.layers_threshold * 10.0).round() as i32,
+            layers_use_median: self.layers_use_median,
+            layers_bases: self.layers_bases,
+            quant_key: if self.quant_enabled { self.quant_colors } else { 0 },
         }
     }
 
@@ -232,8 +258,23 @@ impl ViewerApp {
         if self.cache.as_ref().map(|c| c.key) == Some(key) {
             return;
         }
+        let n_colors = if self.quant_enabled { self.quant_colors } else { 0 };
+        // Overlay always uses original colors; atlas and layers use quantized source.
         let overlay_img = draw_overlay(&self.source, &self.edited).to_rgba8();
-        let atlas = build_atlas(&self.source, &self.edited, self.tolerance);
+        let work_src = if n_colors > 0 {
+            quantize_image(&self.source, n_colors)
+        } else {
+            self.source.clone()
+        };
+        let atlas = build_atlas(&work_src, &self.edited, self.tolerance, 0);
+        let layer_mode = if self.layers_use_median {
+            LayerBaseMode::Median
+        } else {
+            LayerBaseMode::Mode
+        };
+        let decomp =
+            decompose_layers(&work_src, &self.edited, layer_mode, self.layers_threshold, 0, self.layers_bases);
+
         self.cache = Some(Cache {
             key,
             overlay: to_texture(ctx, "overlay", &overlay_img),
@@ -246,6 +287,18 @@ impl ViewerApp {
                 unique: atlas.unique_count,
                 total: atlas.total_cells,
             },
+            bases: decomp
+                .bases
+                .iter()
+                .enumerate()
+                .map(|(i, b)| to_texture(ctx, &format!("base_{i}"), b))
+                .collect(),
+            detail_atlas: to_texture(ctx, "detail_atlas", &decomp.detail_atlas),
+            decomp_cols: decomp.columns,
+            decomp_rows: decomp.rows,
+            decomp_tw: decomp.tile_width,
+            decomp_th: decomp.tile_height,
+            decomp_total: decomp.total_cells,
         });
     }
 }
@@ -254,7 +307,7 @@ impl eframe::App for ViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let n = self.levels.len();
         // When a text field / DragValue has focus, leave Tab, arrows and digit
-        // keys to it; only the dedicated F1/F2 keys switch views unconditionally.
+        // keys to it; only the dedicated F1/F2/F3 keys switch views unconditionally.
         let editing = ctx.memory(|m| m.focused().is_some());
         ctx.input(|i| {
             if i.key_pressed(egui::Key::F1) {
@@ -263,12 +316,18 @@ impl eframe::App for ViewerApp {
             if i.key_pressed(egui::Key::F2) {
                 self.view = View::Atlas;
             }
+            if i.key_pressed(egui::Key::F3) {
+                self.view = View::Layers;
+            }
             if !editing {
                 if i.key_pressed(egui::Key::Num1) {
                     self.view = View::Overlay;
                 }
                 if i.key_pressed(egui::Key::Num2) {
                     self.view = View::Atlas;
+                }
+                if i.key_pressed(egui::Key::Num3) {
+                    self.view = View::Layers;
                 }
                 if i.key_pressed(egui::Key::ArrowRight) {
                     self.selected = (self.selected + 1) % n;
@@ -300,6 +359,7 @@ impl eframe::App for ViewerApp {
                 ui.separator();
                 ui.selectable_value(&mut self.view, View::Overlay, "Overlay");
                 ui.selectable_value(&mut self.view, View::Atlas, "Atlas");
+                ui.selectable_value(&mut self.view, View::Layers, "Layers");
                 ui.separator();
                 ui.label("zoom");
                 ui.add(egui::Slider::new(&mut self.zoom, 0.25..=12.0));
@@ -307,7 +367,18 @@ impl eframe::App for ViewerApp {
                 ui.label("atlas tol");
                 ui.add(egui::Slider::new(&mut self.tolerance, 0.0..=32.0));
                 ui.separator();
-                ui.label("←/→ config · F1/F2 (or 1/2) view");
+                ui.label("layer tol");
+                ui.add(egui::Slider::new(&mut self.layers_threshold, 0.0..=64.0));
+                ui.checkbox(&mut self.layers_use_median, "median");
+                ui.label("bases");
+                ui.add(egui::Slider::new(&mut self.layers_bases, 1u32..=8u32).integer());
+                ui.separator();
+                ui.checkbox(&mut self.quant_enabled, "quantize");
+                if self.quant_enabled {
+                    ui.add(egui::Slider::new(&mut self.quant_colors, 2u32..=256u32).integer());
+                }
+                ui.separator();
+                ui.label("←/→ config · F1/F2/F3 (or 1/2/3) view");
             });
         });
 
@@ -412,6 +483,67 @@ impl eframe::App for ViewerApp {
                                 }
                             }
                         }
+                    });
+                }
+                View::Layers => {
+                    // Extract cheap-copy data from cache before closures borrow self
+                    let (bases_info, detail_id, detail_sz, tw, th, cols, rows, total) = {
+                        let c = self.cache.as_ref().expect("cache built above");
+                        let bi: Vec<(egui::TextureId, egui::Vec2)> = c
+                            .bases
+                            .iter()
+                            .map(|b| (b.id(), b.size_vec2()))
+                            .collect();
+                        (
+                            bi,
+                            c.detail_atlas.id(),
+                            c.detail_atlas.size_vec2(),
+                            c.decomp_tw,
+                            c.decomp_th,
+                            c.decomp_cols,
+                            c.decomp_rows,
+                            c.decomp_total,
+                        )
+                    };
+                    ui.label(format!(
+                        "{}×{} tile  ·  {} cells ({}×{} grid)  ·  {} base(s)  ·  thr {:.1}  ·  {}",
+                        tw,
+                        th,
+                        total,
+                        cols,
+                        rows,
+                        bases_info.len(),
+                        self.layers_threshold,
+                        if self.layers_use_median { "median" } else { "mode" },
+                    ));
+                    ui.separator();
+
+                    let base_zoom = self.zoom.max((64.0 / tw.max(1) as f32).ceil());
+                    let zoom = self.zoom;
+                    ui.columns(2, |cols_ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("bases_scroll")
+                            .show(&mut cols_ui[0], |ui| {
+                                for (i, (id, sz)) in bases_info.iter().enumerate() {
+                                    ui.label(format!("Base {}  ({}×{})", i, tw, th));
+                                    ui.add(
+                                        egui::Image::new(egui::load::SizedTexture::new(*id, *sz))
+                                            .fit_to_original_size(base_zoom),
+                                    );
+                                    ui.add_space(4.0);
+                                }
+                            });
+                        cols_ui[1].label("Detail atlas (transparent = matches assigned base)");
+                        egui::ScrollArea::both()
+                            .id_salt("detail_scroll")
+                            .show(&mut cols_ui[1], |ui| {
+                                ui.add(
+                                    egui::Image::new(egui::load::SizedTexture::new(
+                                        detail_id, detail_sz,
+                                    ))
+                                    .fit_to_original_size(zoom),
+                                );
+                            });
                     });
                 }
             }

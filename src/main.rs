@@ -6,6 +6,16 @@ use anyhow::Context;
 use clap::Parser;
 use cli::{Cli, Command};
 use detile::{detect_levels, detect_tiling, draw_overlay, DetectOptions, DetectionResult, GridDetection};
+use std::path::{Path, PathBuf};
+
+fn layer_path(prefix: &Path, suffix: &str) -> PathBuf {
+    let stem = prefix
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let dir = prefix.parent().unwrap_or(Path::new("."));
+    dir.join(format!("{}{}", stem, suffix))
+}
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -124,7 +134,7 @@ fn main() -> anyhow::Result<()> {
     if let Some(atlas_path) = &d.atlas {
         match &result {
             DetectionResult::Found(detection) => {
-                let atlas = detile::build_atlas(&img, detection, d.atlas_tolerance);
+                let atlas = detile::build_atlas(&img, detection, d.atlas_tolerance, d.quantize);
                 atlas
                     .image
                     .save(atlas_path)
@@ -138,6 +148,54 @@ fn main() -> anyhow::Result<()> {
             }
             DetectionResult::NotFound { .. } => {
                 eprintln!("no tiling detected; atlas not saved");
+            }
+        }
+    }
+
+    if let Some(layers_prefix) = &d.layers {
+        match &result {
+            DetectionResult::Found(detection) => {
+                let mode = match d.layers_mode {
+                    cli::LayerMode::Mode => detile::LayerBaseMode::Mode,
+                    cli::LayerMode::Median => detile::LayerBaseMode::Median,
+                };
+                let decomp =
+                    detile::decompose_layers(
+                        &img,
+                        detection,
+                        mode,
+                        d.layers_threshold,
+                        d.quantize,
+                        d.layers_bases,
+                    );
+                let multi = decomp.bases.len() > 1;
+                for (i, base) in decomp.bases.iter().enumerate() {
+                    let suffix = if multi {
+                        format!("_base_{}.png", i)
+                    } else {
+                        "_base.png".to_string()
+                    };
+                    let p = layer_path(layers_prefix, &suffix);
+                    base.save(&p)
+                        .with_context(|| format!("failed to save base layer: {}", p.display()))?;
+                    eprintln!("base {} saved to {}", i, p.display());
+                }
+                let details_path = layer_path(layers_prefix, "_details.png");
+                decomp
+                    .detail_atlas
+                    .save(&details_path)
+                    .with_context(|| {
+                        format!("failed to save detail atlas: {}", details_path.display())
+                    })?;
+                eprintln!(
+                    "detail atlas saved to {} ({} cells, {} bases)",
+                    details_path.display(),
+                    decomp.total_cells,
+                    decomp.bases.len(),
+                );
+            }
+            DetectionResult::NotFound { .. } => {
+                eprintln!("no tiling detected; layers not saved");
             }
         }
     }
