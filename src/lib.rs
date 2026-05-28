@@ -6,7 +6,7 @@ mod overlay;
 mod periodicity;
 mod types;
 
-pub use atlas::{build_atlas, TileAtlas};
+pub use atlas::{build_atlas, decompose_layers, extract_tiles, quantize_image, LayerBaseMode, LayerDecomposition, TileAtlas};
 pub use overlay::draw_overlay;
 pub use types::*;
 
